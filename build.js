@@ -4,15 +4,17 @@ const path = require("path");
 const BASE = "https://www.nssmc.gov.ua";
 const OUT_DIR = "site";
 
-const SECTIONS = [
-  "https://www.nssmc.gov.ua/news/",
-  "https://www.nssmc.gov.ua/en/category/news/",
-  "https://www.nssmc.gov.ua/en/category/news/zasidannia-komisii/",
-  "https://www.nssmc.gov.ua/en/category/news/ltsenzuvannya/",
-  "https://www.nssmc.gov.ua/en/category/news/naglyad/",
-  "https://www.nssmc.gov.ua/category/news/"
+// Main sections to scan
+const SECTION_CONFIGS = [
+  { url: "https://www.nssmc.gov.ua/news/", pages: 15 },
+  { url: "https://www.nssmc.gov.ua/category/news/", pages: 15 },
+  { url: "https://www.nssmc.gov.ua/en/category/news/", pages: 15 },
+  { url: "https://www.nssmc.gov.ua/en/category/news/zasidannia-komisii/", pages: 12 },
+  { url: "https://www.nssmc.gov.ua/en/category/news/ltsenzuvannya/", pages: 12 },
+  { url: "https://www.nssmc.gov.ua/en/category/news/naglyad/", pages: 12 }
 ];
 
+// Add more variants here over time when you notice misses.
 const ENTITIES = [
   {
     name: "АТ «ЗНВКІФ ««ДІМІДІУМ»",
@@ -39,6 +41,8 @@ const ENTITIES = [
     aliases: [
       'ТОВАРИСТВО З ОБМЕЖЕНОЮ ВІДПОВІДАЛЬНІСТЮ "КОМПАНІЯ З УПРАВЛІННЯ АКТИВАМИ- АДМІНІСТРАТОР ПЕНСІЙНИХ ФОНДІВ "УКРСОЦ-КАПІТАЛ"',
       'ТОВ "УКРСОЦ-КАПІТАЛ"',
+      'ТОВ "КУА-АПФ "УКРСОЦ-КАПІТАЛ"',
+      "КУА-АПФ УКРСОЦ-КАПІТАЛ",
       "УКРСОЦ-КАПІТАЛ",
       "33058377"
     ]
@@ -48,6 +52,7 @@ const ENTITIES = [
     aliases: [
       'ТОВАРИСТВО З ОБМЕЖЕНОЮ ВІДПОВІДАЛЬНІСТЮ "ФОНДОВА КОМПАНІЯ "ЗЕНИТ-ДТ"',
       'ТОВ "ФК "ЗЕНИТ-ДТ"',
+      "ФК ЗЕНИТ-ДТ",
       "ЗЕНИТ-ДТ",
       "35309589"
     ]
@@ -118,8 +123,21 @@ function buildDateVariants(fromStr, toStr) {
   return [...new Set(variants)];
 }
 
-function containsAnyTargetDate(text, dateVariants) {
-  return dateVariants.some(v => text.includes(v));
+function toIsoDate(dateString) {
+  if (!dateString) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return dateString;
+
+  const m = dateString.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (m) {
+    return `${m[3]}-${m[2]}-${m[1]}`;
+  }
+  return "";
+}
+
+function isDateWithinRange(foundDate, fromStr, toStr) {
+  const iso = toIsoDate(foundDate);
+  if (!iso) return false;
+  return iso >= fromStr && iso <= toStr;
 }
 
 function absoluteUrl(href, baseUrl) {
@@ -130,17 +148,38 @@ function absoluteUrl(href, baseUrl) {
   }
 }
 
-function shouldSkipUrl(url) {
-  return (
-    !url.startsWith(BASE) ||
-    /\/tag\/|\/author\/|\/users\/|\/embed|\/trackback|\.pdf($|\?)|\.xlsx?($|\?)|\.docx?($|\?)/i.test(url)
-  );
+function isArticleLikeUrl(url) {
+  if (!url || !url.startsWith(BASE)) return false;
+
+  // Skip feeds, tags, authors, file downloads, embeds, admin-ish endpoints
+  if (
+    /\/feed\/?$|\/tag\/|\/author\/|\/users\/|\/embed\/?$|\/trackback\/?$|\/wp-json\/|\/xmlrpc\.php/i.test(url) ||
+    /\.(pdf|doc|docx|xls|xlsx|zip|rar|jpg|jpeg|png|gif|webp)($|\?)/i.test(url)
+  ) {
+    return false;
+  }
+
+  // Prefer real article-looking paths.
+  const u = new URL(url);
+  const path = u.pathname;
+
+  if (
+    path === "/" ||
+    path === "/news/" ||
+    path === "/category/news/" ||
+    path === "/en/category/news/" ||
+    path.includes("/page/")
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 async function fetchText(url) {
   const res = await fetch(url, {
     headers: {
-      "user-agent": "Mozilla/5.0 (compatible; NSSMC-GitHub-Monitor/1.0)"
+      "user-agent": "Mozilla/5.0 (compatible; NSSMC-GitHub-Monitor/2.0)"
     }
   });
 
@@ -158,7 +197,7 @@ function extractLinks(html, baseUrl) {
   for (const match of matches) {
     const full = absoluteUrl(match[1], baseUrl);
     if (!full) continue;
-    if (shouldSkipUrl(full)) continue;
+    if (!isArticleLikeUrl(full)) continue;
     out.add(full);
   }
 
@@ -169,6 +208,7 @@ function htmlToText(html) {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
     .replace(/&quot;/g, '"')
@@ -176,6 +216,7 @@ function htmlToText(html) {
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
+    .replace(/&#8211;/g, "–")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -214,51 +255,88 @@ function extractExcerpt(text, alias) {
   }
 
   const start = Math.max(0, idx - 250);
-  const end = Math.min(text.length, idx + alias.length + 600);
+  const end = Math.min(text.length, idx + alias.length + 700);
   return text.slice(start, end).trim();
 }
 
-function detectPageDate(text) {
+function detectPageDate(text, html = "") {
   const patterns = [
     /\b(\d{2}\.\d{2}\.\d{4})\b/,
     /\b(\d{4}-\d{2}-\d{2})\b/
   ];
 
+  // First try text
   for (const pattern of patterns) {
     const m = text.match(pattern);
+    if (m) return m[1];
+  }
+
+  // Then try HTML meta/date-ish attributes
+  const htmlPatterns = [
+    /datetime=["'](\d{4}-\d{2}-\d{2})/i,
+    /published[^>]*?(\d{2}\.\d{2}\.\d{4})/i,
+    /date[^>]*?(\d{2}\.\d{2}\.\d{4})/i
+  ];
+
+  for (const pattern of htmlPatterns) {
+    const m = html.match(pattern);
     if (m) return m[1];
   }
 
   return "";
 }
 
-async function collectSectionLinks() {
-  const all = new Set(SECTIONS);
+function buildPaginatedUrls(sectionUrl, pageCount) {
+  const urls = [sectionUrl];
 
-  for (const section of SECTIONS) {
-    try {
-      console.log(`Loading section: ${section}`);
-      const html = await fetchText(section);
-      const links = extractLinks(html, section);
-      for (const link of links) {
-        all.add(link);
+  for (let i = 2; i <= pageCount; i += 1) {
+    const clean = sectionUrl.endsWith("/") ? sectionUrl : `${sectionUrl}/`;
+    urls.push(`${clean}page/${i}/`);
+  }
+
+  return urls;
+}
+
+async function collectSectionLinks() {
+  const all = new Set();
+
+  for (const config of SECTION_CONFIGS) {
+    const paginated = buildPaginatedUrls(config.url, config.pages);
+
+    for (const pageUrl of paginated) {
+      try {
+        console.log(`Loading section page: ${pageUrl}`);
+        const html = await fetchText(pageUrl);
+        const links = extractLinks(html, pageUrl);
+        for (const link of links) {
+          all.add(link);
+        }
+      } catch (err) {
+        console.warn(`Section page failed: ${pageUrl} :: ${err.message}`);
       }
-    } catch (err) {
-      console.warn(`Section failed: ${section} :: ${err.message}`);
     }
   }
 
   return [...all];
 }
 
-async function scanPage(url, dateVariants) {
+async function scanPage(url, dateVariants, fromStr, toStr) {
   try {
     const html = await fetchText(url);
     const text = htmlToText(html);
     const title = extractTitle(html, url);
 
     if (!text) return [];
-    if (!containsAnyTargetDate(text, dateVariants)) return [];
+
+    // Must contain a target date somewhere
+    if (!dateVariants.some(v => text.includes(v) || html.includes(v))) {
+      return [];
+    }
+
+    const foundDate = detectPageDate(text, html);
+    if (!isDateWithinRange(foundDate, fromStr, toStr)) {
+      return [];
+    }
 
     const hits = matchEntities(text);
     if (!hits.length) return [];
@@ -267,8 +345,8 @@ async function scanPage(url, dateVariants) {
       entity: hit.entity,
       matchedBy: hit.matchedBy,
       title,
-      url,
-      date: detectPageDate(text) || "within selected period",
+      url, // direct NSSMC article URL
+      date: foundDate || "within selected period",
       excerpt: extractExcerpt(text, hit.matchedBy)
     }));
   } catch (err) {
@@ -298,6 +376,14 @@ function groupByEntity(items) {
     grouped[item.entity].push(item);
   }
   return grouped;
+}
+
+function sortResults(items) {
+  return [...items].sort((a, b) => {
+    const da = toIsoDate(a.date) || "0000-00-00";
+    const db = toIsoDate(b.date) || "0000-00-00";
+    return db.localeCompare(da);
+  });
 }
 
 function buildHtml(results, fromStr, toStr, generatedAt) {
@@ -337,17 +423,18 @@ function buildHtml(results, fromStr, toStr, generatedAt) {
     `;
   } else {
     for (const [entity, rows] of Object.entries(grouped)) {
+      const sortedRows = sortResults(rows);
       body += `
         <section class="entity">
           <h2>${escapeHtml(entity)}</h2>
-          ${rows.map(row => `
+          ${sortedRows.map(row => `
             <div class="item">
               <div class="meta">
                 <span class="badge">${escapeHtml(row.date)}</span>
               </div>
               <h3>${escapeHtml(row.title)}</h3>
               <p><strong>Matched by:</strong> ${escapeHtml(row.matchedBy)}</p>
-              <p><strong>Source:</strong> <a href="${escapeHtml(row.url)}" target="_blank">${escapeHtml(row.url)}</a></p>
+              <p><strong>Source:</strong> <a href="${escapeHtml(row.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(row.url)}</a></p>
               <div class="excerpt">${escapeHtml(row.excerpt)}</div>
             </div>
           `).join("")}
@@ -388,7 +475,7 @@ function buildHtml(results, fromStr, toStr, generatedAt) {
       <p><strong>Period:</strong> ${escapeHtml(fromStr)} to ${escapeHtml(toStr)}</p>
       <p><strong>Generated:</strong> ${escapeHtml(generatedAt)}</p>
       <p><strong>Total matches:</strong> ${results.length}</p>
-      <p class="muted">This version scans HTML pages only.</p>
+      <p class="muted">This version scans HTML article pages and pagination, and links directly to NSSMC pages.</p>
       ${controls}
     </div>
     ${body}
@@ -440,11 +527,12 @@ async function main() {
   for (const url of links) {
     i += 1;
     console.log(`Scanning ${i}/${links.length}: ${url}`);
-    const hits = await scanPage(url, dateVariants);
+    const hits = await scanPage(url, dateVariants, fromStr, toStr);
     if (hits.length) results.push(...hits);
   }
 
   results = dedupe(results);
+  results = sortResults(results);
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
