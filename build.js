@@ -299,6 +299,31 @@ function groupByEntity(items) {
 }
 
 function buildHtml(results, fromStr, toStr, generatedAt) {
+  const controls = `
+<div style="margin-top:20px;">
+  <h3>Run new report</h3>
+
+  <label>From:</label>
+  <input type="date" id="dateFrom" value="${fromStr}" />
+
+  <label>To:</label>
+  <input type="date" id="dateTo" value="${toStr}" />
+
+  <br/><br/>
+
+  <button onclick="runWorkflow()">Run new scan</button>
+
+  <p style="margin-top:10px;color:#6b7280;">
+    This will open GitHub Actions page.
+  </p>
+</div>
+
+<script>
+function runWorkflow() {
+  window.open("https://github.com/Alex231201/NSSMC_MONITORING/actions/workflows/build-report.yml", "_blank");
+}
+</script>
+`;
   const grouped = groupByEntity(results);
 
   let body = "";
@@ -355,6 +380,7 @@ function buildHtml(results, fromStr, toStr, generatedAt) {
       <p><strong>Period:</strong> ${escapeHtml(fromStr)} to ${escapeHtml(toStr)}</p>
       <p><strong>Generated:</strong> ${escapeHtml(generatedAt)}</p>
       <p><strong>Total matches:</strong> ${results.length}</p>
+${controls}
       <p class="muted">This version scans HTML pages only.</p>
     </div>
     ${body}
