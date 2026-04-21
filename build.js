@@ -4,17 +4,15 @@ const path = require("path");
 const BASE = "https://www.nssmc.gov.ua";
 const OUT_DIR = "site";
 
-// Main sections to scan
 const SECTION_CONFIGS = [
-  { url: "https://www.nssmc.gov.ua/news/", pages: 15 },
-  { url: "https://www.nssmc.gov.ua/category/news/", pages: 15 },
-  { url: "https://www.nssmc.gov.ua/en/category/news/", pages: 15 },
-  { url: "https://www.nssmc.gov.ua/en/category/news/zasidannia-komisii/", pages: 12 },
-  { url: "https://www.nssmc.gov.ua/en/category/news/ltsenzuvannya/", pages: 12 },
-  { url: "https://www.nssmc.gov.ua/en/category/news/naglyad/", pages: 12 }
+  { url: "https://www.nssmc.gov.ua/news/", pages: 20 },
+  { url: "https://www.nssmc.gov.ua/category/news/", pages: 20 },
+  { url: "https://www.nssmc.gov.ua/en/category/news/", pages: 20 },
+  { url: "https://www.nssmc.gov.ua/en/category/news/zasidannia-komisii/", pages: 15 },
+  { url: "https://www.nssmc.gov.ua/en/category/news/ltsenzuvannya/", pages: 15 },
+  { url: "https://www.nssmc.gov.ua/en/category/news/naglyad/", pages: 15 }
 ];
 
-// Add more variants here over time when you notice misses.
 const ENTITIES = [
   {
     name: "АТ «ЗНВКІФ ««ДІМІДІУМ»",
@@ -97,19 +95,14 @@ function formatDateIso(dateObj) {
 
 function parseInputDate(value) {
   const d = new Date(`${value}T00:00:00Z`);
-  if (Number.isNaN(d.getTime())) {
-    throw new Error(`Invalid date: ${value}`);
-  }
+  if (Number.isNaN(d.getTime())) throw new Error(`Invalid date: ${value}`);
   return d;
 }
 
 function buildDateVariants(fromStr, toStr) {
   const from = parseInputDate(fromStr);
   const to = parseInputDate(toStr);
-
-  if (from > to) {
-    throw new Error("DATE_FROM cannot be later than DATE_TO");
-  }
+  if (from > to) throw new Error("DATE_FROM cannot be later than DATE_TO");
 
   const variants = [];
   const current = new Date(from);
@@ -126,11 +119,8 @@ function buildDateVariants(fromStr, toStr) {
 function toIsoDate(dateString) {
   if (!dateString) return "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return dateString;
-
   const m = dateString.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
-  if (m) {
-    return `${m[3]}-${m[2]}-${m[1]}`;
-  }
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
   return "";
 }
 
@@ -148,38 +138,19 @@ function absoluteUrl(href, baseUrl) {
   }
 }
 
-function isArticleLikeUrl(url) {
-  if (!url || !url.startsWith(BASE)) return false;
+function shouldSkipLink(url) {
+  if (!url || !url.startsWith(BASE)) return true;
 
-  // Skip feeds, tags, authors, file downloads, embeds, admin-ish endpoints
-  if (
-    /\/feed\/?$|\/tag\/|\/author\/|\/users\/|\/embed\/?$|\/trackback\/?$|\/wp-json\/|\/xmlrpc\.php/i.test(url) ||
+  return (
+    /\/wp-json\/|\/xmlrpc\.php|\/tag\/|\/author\/|\/users\/|\/embed\/?$|\/trackback\/?$/i.test(url) ||
     /\.(pdf|doc|docx|xls|xlsx|zip|rar|jpg|jpeg|png|gif|webp)($|\?)/i.test(url)
-  ) {
-    return false;
-  }
-
-  // Prefer real article-looking paths.
-  const u = new URL(url);
-  const path = u.pathname;
-
-  if (
-    path === "/" ||
-    path === "/news/" ||
-    path === "/category/news/" ||
-    path === "/en/category/news/" ||
-    path.includes("/page/")
-  ) {
-    return false;
-  }
-
-  return true;
+  );
 }
 
 async function fetchText(url) {
   const res = await fetch(url, {
     headers: {
-      "user-agent": "Mozilla/5.0 (compatible; NSSMC-GitHub-Monitor/2.0)"
+      "user-agent": "Mozilla/5.0 (compatible; NSSMC-GitHub-Monitor/3.0)"
     }
   });
 
@@ -197,7 +168,7 @@ function extractLinks(html, baseUrl) {
   for (const match of matches) {
     const full = absoluteUrl(match[1], baseUrl);
     if (!full) continue;
-    if (!isArticleLikeUrl(full)) continue;
+    if (shouldSkipLink(full)) continue;
     out.add(full);
   }
 
@@ -250,9 +221,7 @@ function extractExcerpt(text, alias) {
   const normAlias = normalizeText(alias);
   const idx = normText.indexOf(normAlias);
 
-  if (idx < 0) {
-    return text.slice(0, 700);
-  }
+  if (idx < 0) return text.slice(0, 700);
 
   const start = Math.max(0, idx - 250);
   const end = Math.min(text.length, idx + alias.length + 700);
@@ -265,17 +234,15 @@ function detectPageDate(text, html = "") {
     /\b(\d{4}-\d{2}-\d{2})\b/
   ];
 
-  // First try text
   for (const pattern of patterns) {
     const m = text.match(pattern);
     if (m) return m[1];
   }
 
-  // Then try HTML meta/date-ish attributes
   const htmlPatterns = [
     /datetime=["'](\d{4}-\d{2}-\d{2})/i,
-    /published[^>]*?(\d{2}\.\d{2}\.\d{4})/i,
-    /date[^>]*?(\d{2}\.\d{2}\.\d{4})/i
+    /(\d{2}\.\d{2}\.\d{4})/i,
+    /(\d{4}-\d{2}-\d{2})/i
   ];
 
   for (const pattern of htmlPatterns) {
@@ -288,9 +255,9 @@ function detectPageDate(text, html = "") {
 
 function buildPaginatedUrls(sectionUrl, pageCount) {
   const urls = [sectionUrl];
+  const clean = sectionUrl.endsWith("/") ? sectionUrl : `${sectionUrl}/`;
 
   for (let i = 2; i <= pageCount; i += 1) {
-    const clean = sectionUrl.endsWith("/") ? sectionUrl : `${sectionUrl}/`;
     urls.push(`${clean}page/${i}/`);
   }
 
@@ -301,16 +268,14 @@ async function collectSectionLinks() {
   const all = new Set();
 
   for (const config of SECTION_CONFIGS) {
-    const paginated = buildPaginatedUrls(config.url, config.pages);
+    const pages = buildPaginatedUrls(config.url, config.pages);
 
-    for (const pageUrl of paginated) {
+    for (const pageUrl of pages) {
       try {
         console.log(`Loading section page: ${pageUrl}`);
         const html = await fetchText(pageUrl);
         const links = extractLinks(html, pageUrl);
-        for (const link of links) {
-          all.add(link);
-        }
+        for (const link of links) all.add(link);
       } catch (err) {
         console.warn(`Section page failed: ${pageUrl} :: ${err.message}`);
       }
@@ -328,24 +293,23 @@ async function scanPage(url, dateVariants, fromStr, toStr) {
 
     if (!text) return [];
 
-    // Must contain a target date somewhere
-    if (!dateVariants.some(v => text.includes(v) || html.includes(v))) {
-      return [];
-    }
-
-    const foundDate = detectPageDate(text, html);
-    if (!isDateWithinRange(foundDate, fromStr, toStr)) {
-      return [];
-    }
-
     const hits = matchEntities(text);
     if (!hits.length) return [];
+
+    const foundDate = detectPageDate(text, html);
+
+    // Date filter: either direct page date is in range OR page contains one of the target dates
+    const dateOk =
+      isDateWithinRange(foundDate, fromStr, toStr) ||
+      dateVariants.some(v => text.includes(v) || html.includes(v));
+
+    if (!dateOk) return [];
 
     return hits.map(hit => ({
       entity: hit.entity,
       matchedBy: hit.matchedBy,
       title,
-      url, // direct NSSMC article URL
+      url,
       date: foundDate || "within selected period",
       excerpt: extractExcerpt(text, hit.matchedBy)
     }));
@@ -406,8 +370,7 @@ function buildHtml(results, fromStr, toStr, generatedAt) {
         <button class="button" onclick="openWorkflow()">Open GitHub workflow</button>
       </div>
       <p class="muted">
-        Select the dates here, then click the button. The GitHub workflow page will open in a new tab.
-        Copy the same dates there and run the workflow.
+        Select dates here, then open the workflow page and run it with the same dates.
       </p>
     </div>
   `;
@@ -465,7 +428,6 @@ function buildHtml(results, fromStr, toStr, generatedAt) {
     .control-group label { font-weight:700; font-size:14px; }
     .control-group input { padding:10px 12px; border:1px solid #d1d5db; border-radius:10px; font-size:14px; }
     .button { background:#2563eb; color:#fff; border:none; border-radius:10px; padding:12px 16px; font-weight:700; cursor:pointer; }
-    .button:hover { opacity:0.95; }
   </style>
 </head>
 <body>
@@ -475,7 +437,7 @@ function buildHtml(results, fromStr, toStr, generatedAt) {
       <p><strong>Period:</strong> ${escapeHtml(fromStr)} to ${escapeHtml(toStr)}</p>
       <p><strong>Generated:</strong> ${escapeHtml(generatedAt)}</p>
       <p><strong>Total matches:</strong> ${results.length}</p>
-      <p class="muted">This version scans HTML article pages and pagination, and links directly to NSSMC pages.</p>
+      <p class="muted">This version scans HTML pages, paginated archives, and direct NSSMC page links.</p>
       ${controls}
     </div>
     ${body}
@@ -499,7 +461,6 @@ function buildHtml(results, fromStr, toStr, generatedAt) {
       try {
         const savedFrom = localStorage.getItem('nssmc_monitor_date_from');
         const savedTo = localStorage.getItem('nssmc_monitor_date_to');
-
         if (savedFrom) document.getElementById('dateFrom').value = savedFrom;
         if (savedTo) document.getElementById('dateTo').value = savedTo;
       } catch (e) {}
@@ -514,7 +475,6 @@ async function main() {
   yesterday.setUTCDate(yesterday.getUTCDate() - 1);
 
   const defaultDate = formatDateIso(yesterday);
-
   const fromStr = process.env.DATE_FROM || defaultDate;
   const toStr = process.env.DATE_TO || defaultDate;
 
