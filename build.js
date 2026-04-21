@@ -1,0 +1,412 @@
+const fs = require("fs");
+const path = require("path");
+
+const BASE = "https://www.nssmc.gov.ua";
+const OUT_DIR = "site";
+
+const SECTIONS = [
+  "https://www.nssmc.gov.ua/news/",
+  "https://www.nssmc.gov.ua/en/category/news/",
+  "https://www.nssmc.gov.ua/en/category/news/zasidannia-komisii/",
+  "https://www.nssmc.gov.ua/en/category/news/ltsenzuvannya/",
+  "https://www.nssmc.gov.ua/en/category/news/naglyad/",
+  "https://www.nssmc.gov.ua/category/news/"
+];
+
+const ENTITIES = [
+  {
+    name: "АТ «ЗНВКІФ ««ДІМІДІУМ»",
+    aliases: [
+      "АТ «ЗНВКІФ ««ДІМІДІУМ»",
+      "АКЦІОНЕРНЕ ТОВАРИСТВО «ЗАКРИТИЙ НЕДИВЕРСИФІКОВАНИЙ ВЕНЧУРНИЙ КОРПОРАТИВНИЙ ІНВЕСТИЦІЙНИЙ ФОНД «ДІМІДІУМ»",
+      "ЗНВКІФ ДІМІДІУМ",
+      "ДІМІДІУМ",
+      "46201433"
+    ]
+  },
+  {
+    name: "ТОВ \"КУА \"УНІВЕР МЕНЕДЖМЕНТ\"",
+    aliases: [
+      "ТОВАРИСТВО З ОБМЕЖЕНОЮ ВІДПОВІДАЛЬНІСТЮ КОМПАНІЯ З УПРАВЛІННЯ АКТИВАМИ УНІВЕР МЕНЕДЖМЕНТ",
+      "ТОВ \"КУА \"УНІВЕР МЕНЕДЖМЕНТ\"",
+      "КУА УНІВЕР МЕНЕДЖМЕНТ",
+      "УНІВЕР МЕНЕДЖМЕНТ",
+      "33777261"
+    ]
+  },
+  {
+    name: "ТОВ \"УКРСОЦ-КАПІТАЛ\"",
+    aliases: [
+      "ТОВАРИСТВО З ОБМЕЖЕНОЮ ВІДПОВІДАЛЬНІСТЮ \"КОМПАНІЯ З УПРАВЛІННЯ АКТИВАМИ- АДМІНІСТРАТОР ПЕНСІЙНИХ ФОНДІВ \"УКРСОЦ-КАПІТАЛ\"",
+      "ТОВ \"УКРСОЦ-КАПІТАЛ\"",
+      "УКРСОЦ-КАПІТАЛ",
+      "33058377"
+    ]
+  },
+  {
+    name: "ТОВ \"ФК \"ЗЕНИТ-ДТ\"",
+    aliases: [
+      "ТОВАРИСТВО З ОБМЕЖЕНОЮ ВІДПОВІДАЛЬНІСТЮ \"ФОНДОВА КОМПАНІЯ \"ЗЕНИТ-ДТ\"",
+      "ТОВ \"ФК \"ЗЕНИТ-ДТ\"",
+      "ЗЕНИТ-ДТ",
+      "35309589"
+    ]
+  }
+];
+
+function normalizeText(text) {
+  return String(text || "")
+    .replaceAll("«", '"')
+    .replaceAll("»", '"')
+    .replaceAll("“", '"')
+    .replaceAll("”", '"')
+    .replaceAll("’", "'")
+    .replaceAll("`", "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function escapeHtml(text) {
+  return String(text || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function formatDateHuman(dateObj) {
+  const dd = String(dateObj.getDate()).padStart(2, "0");
+  const mm = String(dateObj.getMonth() + 1).padStart(2, "0");
+  const yyyy = dateObj.getFullYear();
+  return `${dd}.${mm}.${yyyy}`;
+}
+
+function formatDateIso(dateObj) {
+  const dd = String(dateObj.getDate()).padStart(2, "0");
+  const mm = String(dateObj.getMonth() + 1).padStart(2, "0");
+  const yyyy = dateObj.getFullYear();
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function parseInputDate(value) {
+  const d = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) {
+    throw new Error(`Invalid date: ${value}`);
+  }
+  return d;
+}
+
+function buildDateVariants(fromStr, toStr) {
+  const from = parseInputDate(fromStr);
+  const to = parseInputDate(toStr);
+
+  if (from > to) {
+    throw new Error("DATE_FROM cannot be later than DATE_TO");
+  }
+
+  const variants = [];
+  const current = new Date(from);
+
+  while (current <= to) {
+    variants.push(formatDateHuman(current));
+    variants.push(formatDateIso(current));
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+
+  return [...new Set(variants)];
+}
+
+function containsAnyTargetDate(text, dateVariants) {
+  return dateVariants.some(v => text.includes(v));
+}
+
+function absoluteUrl(href, baseUrl) {
+  try {
+    return new URL(href, baseUrl).href;
+  } catch {
+    return null;
+  }
+}
+
+function shouldSkipUrl(url) {
+  return !url.startsWith(BASE) ||
+    /\/tag\/|\/author\/|\/users\/|\/embed|\/trackback|\.pdf($|\?)|\.xlsx?($|\?)|\.docx?($|\?)/i.test(url);
+}
+
+async function fetchText(url) {
+  const res = await fetch(url, {
+    headers: {
+      "user-agent": "Mozilla/5.0 (compatible; NSSMC-GitHub-Monitor/1.0)"
+    }
+  });
+
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} for ${url}`);
+  }
+
+  return await res.text();
+}
+
+function extractLinks(html, baseUrl) {
+  const matches = [...html.matchAll(/href\s*=\s*["']([^"'#>]+)["']/gi)];
+  const out = new Set();
+
+  for (const match of matches) {
+    const full = absoluteUrl(match[1], baseUrl);
+    if (!full) continue;
+    if (shouldSkipUrl(full)) continue;
+    out.add(full);
+  }
+
+  return [...out];
+}
+
+function htmlToText(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractTitle(html, fallbackUrl) {
+  const m = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  return (m ? htmlToText(m[1]) : fallbackUrl).replace(/\s+/g, " ").trim();
+}
+
+function matchEntities(text) {
+  const norm = normalizeText(text);
+  const hits = [];
+
+  for (const entity of ENTITIES) {
+    for (const alias of entity.aliases) {
+      if (norm.includes(normalizeText(alias))) {
+        hits.push({
+          entity: entity.name,
+          matchedBy: alias
+        });
+        break;
+      }
+    }
+  }
+
+  return hits;
+}
+
+function extractExcerpt(text, alias) {
+  const normText = normalizeText(text);
+  const normAlias = normalizeText(alias);
+  const idx = normText.indexOf(normAlias);
+
+  if (idx < 0) {
+    return text.slice(0, 700);
+  }
+
+  const start = Math.max(0, idx - 250);
+  const end = Math.min(text.length, idx + alias.length + 600);
+  return text.slice(start, end).trim();
+}
+
+function detectPageDate(text) {
+  const patterns = [
+    /\b(\d{2}\.\d{2}\.\d{4})\b/,
+    /\b(\d{4}-\d{2}-\d{2})\b/
+  ];
+
+  for (const pattern of patterns) {
+    const m = text.match(pattern);
+    if (m) return m[1];
+  }
+
+  return "";
+}
+
+async function collectSectionLinks() {
+  const all = new Set(SECTIONS);
+
+  for (const section of SECTIONS) {
+    try {
+      console.log(`Loading section: ${section}`);
+      const html = await fetchText(section);
+      const links = extractLinks(html, section);
+      for (const link of links) {
+        all.add(link);
+      }
+    } catch (err) {
+      console.warn(`Section failed: ${section} :: ${err.message}`);
+    }
+  }
+
+  return [...all];
+}
+
+async function scanPage(url, dateVariants) {
+  try {
+    const html = await fetchText(url);
+    const text = htmlToText(html);
+    const title = extractTitle(html, url);
+
+    if (!text) return [];
+    if (!containsAnyTargetDate(text, dateVariants)) return [];
+
+    const hits = matchEntities(text);
+    if (!hits.length) return [];
+
+    return hits.map(hit => ({
+      entity: hit.entity,
+      matchedBy: hit.matchedBy,
+      title,
+      url,
+      date: detectPageDate(text) || "within selected period",
+      excerpt: extractExcerpt(text, hit.matchedBy)
+    }));
+  } catch (err) {
+    console.warn(`Page failed: ${url} :: ${err.message}`);
+    return [];
+  }
+}
+
+function dedupe(items) {
+  const seen = new Set();
+  const out = [];
+
+  for (const item of items) {
+    const key = `${item.entity}|||${item.url}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+
+  return out;
+}
+
+function groupByEntity(items) {
+  const grouped = {};
+  for (const item of items) {
+    if (!grouped[item.entity]) grouped[item.entity] = [];
+    grouped[item.entity].push(item);
+  }
+  return grouped;
+}
+
+function buildHtml(results, fromStr, toStr, generatedAt) {
+  const grouped = groupByEntity(results);
+
+  let body = "";
+
+  if (!results.length) {
+    body = `
+      <div class="empty">
+        <h2>No matches found</h2>
+        <p>No matching NSSMC HTML pages were found for the selected period.</p>
+      </div>
+    `;
+  } else {
+    for (const [entity, rows] of Object.entries(grouped)) {
+      body += `
+        <section class="entity">
+          <h2>${escapeHtml(entity)}</h2>
+          ${rows.map(row => `
+            <div class="item">
+              <div class="meta">
+                <span class="badge">${escapeHtml(row.date)}</span>
+              </div>
+              <h3>${escapeHtml(row.title)}</h3>
+              <p><strong>Matched by:</strong> ${escapeHtml(row.matchedBy)}</p>
+              <p><strong>Source:</strong> <a href="${escapeHtml(row.url)}" target="_blank">${escapeHtml(row.url)}</a></p>
+              <div class="excerpt">${escapeHtml(row.excerpt)}</div>
+            </div>
+          `).join("")}
+        </section>
+      `;
+    }
+  }
+
+  return `<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NSSMC Monitor Report</title>
+  <style>
+    body { font-family: Arial, sans-serif; background:#f5f7fb; color:#1f2937; margin:0; padding:0; }
+    .container { max-width:1100px; margin:0 auto; padding:24px; }
+    .header, .entity, .empty { background:#fff; border-radius:16px; padding:20px; box-shadow:0 8px 24px rgba(0,0,0,.08); margin-bottom:20px; }
+    .item { border:1px solid #e5e7eb; border-radius:12px; padding:14px; margin-top:14px; background:#fafafa; }
+    .badge { display:inline-block; background:#dbeafe; color:#1d4ed8; border-radius:999px; padding:4px 10px; font-size:12px; font-weight:700; }
+    .excerpt { white-space:pre-wrap; background:#fff; border-left:4px solid #6366f1; padding:12px; border-radius:10px; margin-top:10px; line-height:1.5; }
+    a { color:#2563eb; word-break:break-all; }
+    .muted { color:#6b7280; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>NSSMC Monitor Report</h1>
+      <p><strong>Period:</strong> ${escapeHtml(fromStr)} to ${escapeHtml(toStr)}</p>
+      <p><strong>Generated:</strong> ${escapeHtml(generatedAt)}</p>
+      <p><strong>Total matches:</strong> ${results.length}</p>
+      <p class="muted">This version scans HTML pages only.</p>
+    </div>
+    ${body}
+  </div>
+</body>
+</html>`;
+}
+
+async function main() {
+  const now = new Date();
+  const yesterday = new Date();
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+
+  const defaultDate = formatDateIso(yesterday);
+
+  const fromStr = process.env.DATE_FROM || defaultDate;
+  const toStr = process.env.DATE_TO || defaultDate;
+
+  const dateVariants = buildDateVariants(fromStr, toStr);
+  const links = await collectSectionLinks();
+
+  let results = [];
+  let i = 0;
+
+  for (const url of links) {
+    i += 1;
+    console.log(`Scanning ${i}/${links.length}: ${url}`);
+    const hits = await scanPage(url, dateVariants);
+    if (hits.length) results.push(...hits);
+  }
+
+  results = dedupe(results);
+
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+
+  const generatedAt = new Date().toISOString();
+  const html = buildHtml(results, fromStr, toStr, generatedAt);
+
+  fs.writeFileSync(path.join(OUT_DIR, "index.html"), html, "utf8");
+
+  const json = {
+    period: { from: fromStr, to: toStr },
+    generatedAt,
+    totalMatches: results.length,
+    results
+  };
+  fs.writeFileSync(path.join(OUT_DIR, "results.json"), JSON.stringify(json, null, 2), "utf8");
+
+  console.log(`Done. Matches: ${results.length}`);
+}
+
+main().catch(err => {
+  console.error(err);
+  process.exit(1);
+});
