@@ -25,29 +25,29 @@ const ENTITIES = [
     ]
   },
   {
-    name: "ТОВ \"КУА \"УНІВЕР МЕНЕДЖМЕНТ\"",
+    name: 'ТОВ "КУА "УНІВЕР МЕНЕДЖМЕНТ"',
     aliases: [
       "ТОВАРИСТВО З ОБМЕЖЕНОЮ ВІДПОВІДАЛЬНІСТЮ КОМПАНІЯ З УПРАВЛІННЯ АКТИВАМИ УНІВЕР МЕНЕДЖМЕНТ",
-      "ТОВ \"КУА \"УНІВЕР МЕНЕДЖМЕНТ\"",
+      'ТОВ "КУА "УНІВЕР МЕНЕДЖМЕНТ"',
       "КУА УНІВЕР МЕНЕДЖМЕНТ",
       "УНІВЕР МЕНЕДЖМЕНТ",
       "33777261"
     ]
   },
   {
-    name: "ТОВ \"УКРСОЦ-КАПІТАЛ\"",
+    name: 'ТОВ "УКРСОЦ-КАПІТАЛ"',
     aliases: [
-      "ТОВАРИСТВО З ОБМЕЖЕНОЮ ВІДПОВІДАЛЬНІСТЮ \"КОМПАНІЯ З УПРАВЛІННЯ АКТИВАМИ- АДМІНІСТРАТОР ПЕНСІЙНИХ ФОНДІВ \"УКРСОЦ-КАПІТАЛ\"",
-      "ТОВ \"УКРСОЦ-КАПІТАЛ\"",
+      'ТОВАРИСТВО З ОБМЕЖЕНОЮ ВІДПОВІДАЛЬНІСТЮ "КОМПАНІЯ З УПРАВЛІННЯ АКТИВАМИ- АДМІНІСТРАТОР ПЕНСІЙНИХ ФОНДІВ "УКРСОЦ-КАПІТАЛ"',
+      'ТОВ "УКРСОЦ-КАПІТАЛ"',
       "УКРСОЦ-КАПІТАЛ",
       "33058377"
     ]
   },
   {
-    name: "ТОВ \"ФК \"ЗЕНИТ-ДТ\"",
+    name: 'ТОВ "ФК "ЗЕНИТ-ДТ"',
     aliases: [
-      "ТОВАРИСТВО З ОБМЕЖЕНОЮ ВІДПОВІДАЛЬНІСТЮ \"ФОНДОВА КОМПАНІЯ \"ЗЕНИТ-ДТ\"",
-      "ТОВ \"ФК \"ЗЕНИТ-ДТ\"",
+      'ТОВАРИСТВО З ОБМЕЖЕНОЮ ВІДПОВІДАЛЬНІСТЮ "ФОНДОВА КОМПАНІЯ "ЗЕНИТ-ДТ"',
+      'ТОВ "ФК "ЗЕНИТ-ДТ"',
       "ЗЕНИТ-ДТ",
       "35309589"
     ]
@@ -77,16 +77,16 @@ function escapeHtml(text) {
 }
 
 function formatDateHuman(dateObj) {
-  const dd = String(dateObj.getDate()).padStart(2, "0");
-  const mm = String(dateObj.getMonth() + 1).padStart(2, "0");
-  const yyyy = dateObj.getFullYear();
+  const dd = String(dateObj.getUTCDate()).padStart(2, "0");
+  const mm = String(dateObj.getUTCMonth() + 1).padStart(2, "0");
+  const yyyy = dateObj.getUTCFullYear();
   return `${dd}.${mm}.${yyyy}`;
 }
 
 function formatDateIso(dateObj) {
-  const dd = String(dateObj.getDate()).padStart(2, "0");
-  const mm = String(dateObj.getMonth() + 1).padStart(2, "0");
-  const yyyy = dateObj.getFullYear();
+  const dd = String(dateObj.getUTCDate()).padStart(2, "0");
+  const mm = String(dateObj.getUTCMonth() + 1).padStart(2, "0");
+  const yyyy = dateObj.getUTCFullYear();
   return `${yyyy}-${mm}-${dd}`;
 }
 
@@ -131,8 +131,10 @@ function absoluteUrl(href, baseUrl) {
 }
 
 function shouldSkipUrl(url) {
-  return !url.startsWith(BASE) ||
-    /\/tag\/|\/author\/|\/users\/|\/embed|\/trackback|\.pdf($|\?)|\.xlsx?($|\?)|\.docx?($|\?)/i.test(url);
+  return (
+    !url.startsWith(BASE) ||
+    /\/tag\/|\/author\/|\/users\/|\/embed|\/trackback|\.pdf($|\?)|\.xlsx?($|\?)|\.docx?($|\?)/i.test(url)
+  );
 }
 
 async function fetchText(url) {
@@ -299,32 +301,30 @@ function groupByEntity(items) {
 }
 
 function buildHtml(results, fromStr, toStr, generatedAt) {
-  const controls = `
-<div style="margin-top:20px;">
-  <h3>Run new report</h3>
-
-  <label>From:</label>
-  <input type="date" id="dateFrom" value="${fromStr}" />
-
-  <label>To:</label>
-  <input type="date" id="dateTo" value="${toStr}" />
-
-  <br/><br/>
-
-  <button onclick="runWorkflow()">Run new scan</button>
-
-  <p style="margin-top:10px;color:#6b7280;">
-    This will open GitHub Actions page.
-  </p>
-</div>
-
-<script>
-function runWorkflow() {
-  window.open("https://github.com/Alex231201/NSSMC_MONITORING/actions/workflows/build-report.yml", "_blank");
-}
-</script>
-`;
   const grouped = groupByEntity(results);
+
+  const controls = `
+    <div class="controls">
+      <h3>Run new report</h3>
+      <div class="controls-row">
+        <div class="control-group">
+          <label for="dateFrom">From</label>
+          <input type="date" id="dateFrom" value="${escapeHtml(fromStr)}">
+        </div>
+        <div class="control-group">
+          <label for="dateTo">To</label>
+          <input type="date" id="dateTo" value="${escapeHtml(toStr)}">
+        </div>
+      </div>
+      <div class="controls-row">
+        <button class="button" onclick="runWorkflow()">Open GitHub workflow</button>
+      </div>
+      <p class="muted">
+        Choose dates on this page, then click the button. GitHub will open the workflow page in a new tab.
+        Paste the same dates there and run the workflow.
+      </p>
+    </div>
+  `;
 
   let body = "";
 
@@ -371,6 +371,14 @@ function runWorkflow() {
     .excerpt { white-space:pre-wrap; background:#fff; border-left:4px solid #6366f1; padding:12px; border-radius:10px; margin-top:10px; line-height:1.5; }
     a { color:#2563eb; word-break:break-all; }
     .muted { color:#6b7280; }
+    .controls { margin-top:24px; padding:16px; border:1px solid #e5e7eb; border-radius:12px; background:#fafafa; }
+    .controls h3 { margin-top:0; }
+    .controls-row { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:12px; }
+    .control-group { display:flex; flex-direction:column; gap:6px; }
+    .control-group label { font-weight:700; font-size:14px; }
+    .control-group input { padding:10px 12px; border:1px solid #d1d5db; border-radius:10px; font-size:14px; }
+    .button { background:#2563eb; color:#fff; border:none; border-radius:10px; padding:12px 16px; font-weight:700; cursor:pointer; }
+    .button:hover { opacity:0.95; }
   </style>
 </head>
 <body>
@@ -380,17 +388,41 @@ function runWorkflow() {
       <p><strong>Period:</strong> ${escapeHtml(fromStr)} to ${escapeHtml(toStr)}</p>
       <p><strong>Generated:</strong> ${escapeHtml(generatedAt)}</p>
       <p><strong>Total matches:</strong> ${results.length}</p>
-${controls}
       <p class="muted">This version scans HTML pages only.</p>
+      ${controls}
     </div>
     ${body}
   </div>
+
+  <script>
+    function runWorkflow() {
+      const from = document.getElementById('dateFrom').value;
+      const to = document.getElementById('dateTo').value;
+      const workflowUrl = 'https://github.com/Alex231201/NSSMC_MONITORING/actions/workflows/build-report.yml';
+
+      try {
+        localStorage.setItem('nssmc_monitor_date_from', from);
+        localStorage.setItem('nssmc_monitor_date_to', to);
+      } catch (e) {}
+
+      window.open(workflowUrl, '_blank');
+    }
+
+    (function restoreDates() {
+      try {
+        const savedFrom = localStorage.getItem('nssmc_monitor_date_from');
+        const savedTo = localStorage.getItem('nssmc_monitor_date_to');
+
+        if (savedFrom) document.getElementById('dateFrom').value = savedFrom;
+        if (savedTo) document.getElementById('dateTo').value = savedTo;
+      } catch (e) {}
+    })();
+  </script>
 </body>
 </html>`;
 }
 
 async function main() {
-  const now = new Date();
   const yesterday = new Date();
   yesterday.setUTCDate(yesterday.getUTCDate() - 1);
 
