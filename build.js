@@ -305,7 +305,7 @@ function buildHtml(results, fromStr, toStr, generatedAt) {
 
   const controls = `
     <div class="controls">
-      <h3>Run new report</h3>
+      <h3>Choose another period</h3>
       <div class="controls-row">
         <div class="control-group">
           <label for="dateFrom">From</label>
@@ -317,11 +317,11 @@ function buildHtml(results, fromStr, toStr, generatedAt) {
         </div>
       </div>
       <div class="controls-row">
-        <button class="button" onclick="runWorkflow()">Open GitHub workflow</button>
+        <button class="button" onclick="openWorkflow()">Open GitHub workflow</button>
       </div>
       <p class="muted">
-        Choose dates on this page, then click the button. GitHub will open the workflow page in a new tab.
-        Paste the same dates there and run the workflow.
+        Select the dates here, then click the button. The GitHub workflow page will open in a new tab.
+        Copy the same dates there and run the workflow.
       </p>
     </div>
   `;
@@ -395,7 +395,7 @@ function buildHtml(results, fromStr, toStr, generatedAt) {
   </div>
 
   <script>
-    function runWorkflow() {
+    function openWorkflow() {
       const from = document.getElementById('dateFrom').value;
       const to = document.getElementById('dateTo').value;
       const workflowUrl = 'https://github.com/Alex231201/NSSMC_MONITORING/actions/workflows/build-report.yml';
